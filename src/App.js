@@ -10,7 +10,8 @@ function calculateWinner(squares) {
 
   for (let i = 0; i < lines.length; i++) {
     const [a, b, c] = lines[i];
-    if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c]) {
+    // Agora comparamos os nomes dos Pokémon armazenados nas casas
+    if (squares[a] && squares[a].name === squares[b]?.name && squares[a].name === squares[c]?.name) {
       return { winner: squares[a], line: [a, b, c] };
     }
   }
@@ -18,32 +19,88 @@ function calculateWinner(squares) {
 }
 
 export default function App() {
-  // O histórico armazena arrays com o estado das 9 posições
+  // Estados para os Pokémon dos Jogadores
+  const [p1Data, setP1Data] = useState(null);
+  const [p2Data, setP2Data] = useState(null);
+  const [p1Input, setP1Input] = useState("pikachu");
+  const [p2Input, setP2Input] = useState("bulbasaur");
+  
+  // Estados de controle da API
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState("");
+
+  // Estados do Jogo (O histórico agora guarda objetos de Pokémon ou null)
   const [history, setHistory] = useState([Array(9).fill(null)]);
   const [stepNumber, setStepNumber] = useState(0);
-  const [xIsNext, setXIsNext] = useState(true);
+  const [p1IsNext, setP1IsNext] = useState(true);
   const [isVsComputer, setIsVsComputer] = useState(false);
+  const [score, setScore] = useState({ p1: 0, p2: 0, draws: 0 });
 
-  const [score, setScore] = useState({ X: 0, O: 0, draws: 0 });
-
-  // O tabuleiro atual é baseado no passo selecionado no histórico
   const currentSquares = history[stepNumber];
   const result = calculateWinner(currentSquares);
 
-  // Jogada do Computador (IA simples)
+  // Função assíncrona para buscar Pokémon na PokéAPI
+  const fetchPokemon = async (name) => {
+    try {
+      const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase().trim()}`);
+      if (!response.ok) {
+        throw new Error("Pokémon não encontrado.");
+      }
+      const data = await response.ok ? await response.json() : null;
+      return {
+        name: data.name.toUpperCase(),
+        image: data.sprites.front_default || data.sprites.other["official-artwork"].front_default
+      };
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  // Carrega os Pokémon iniciais (Requisito 1)
   useEffect(() => {
-    if (isVsComputer && !xIsNext && !result) {
-      // Verifica se o jogo já empatou
+    async function loadInitialPokemon() {
+      try {
+        setLoading(true);
+        setApiError("");
+        const p1 = await fetchPokemon("pikachu");
+        const p2 = await fetchPokemon("bulbasaur");
+        setP1Data(p1);
+        setP2Data(p2);
+      } catch (err) {
+        setApiError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadInitialPokemon();
+  }, []);
+
+  // Alterar Pokémon customizados (Requisito 3 e 4)
+  const handleUpdatePokemon = async (e) => {
+    e.preventDefault();
+    try {
+      setApiError("");
+      const p1 = await fetchPokemon(p1Input);
+      const p2 = await fetchPokemon(p2Input);
+      setP1Data(p1);
+      setP2Data(p2);
+      restartGame(); // Reinicia para aplicar os novos personagens sem quebrar a partida
+    } catch (err) {
+      setApiError(err.message); // Tratamento de erro (Requisito 5)
+    }
+  };
+
+  // Jogada da Máquina
+  useEffect(() => {
+    if (isVsComputer && !p1IsNext && !result && p2Data) {
       if (currentSquares.every((square) => square !== null)) return;
 
-      // Pequeno delay para parecer que a máquina está "pensando"
       const timer = setTimeout(() => {
         const emptySquares = currentSquares
           .map((val, idx) => (val === null ? idx : null))
           .filter((val) => val !== null);
 
         if (emptySquares.length > 0) {
-          // Escolhe uma posição aleatória dentre as disponíveis
           const randomMove = emptySquares[Math.floor(Math.random() * emptySquares.length)];
           executeMove(randomMove);
         }
@@ -51,43 +108,46 @@ export default function App() {
 
       return () => clearTimeout(timer);
     }
-  }, [xIsNext, isVsComputer, currentSquares, result]);
+  }, [p1IsNext, isVsComputer, currentSquares, result, p2Data]);
 
   function executeMove(i) {
-    if (result || currentSquares[i]) return;
+    if (result || currentSquares[i] || !p1Data || !p2Data) return;
 
-    // Remove históricos futuros caso o jogador tenha desfeito jogadas e feito uma nova
     const newHistory = history.slice(0, stepNumber + 1);
     const nextSquares = [...currentSquares];
-    nextSquares[i] = xIsNext ? "X" : "O";
+    
+    // Define qual objeto de Pokémon vai para a casa clicada
+    nextSquares[i] = p1IsNext ? p1Data : p2Data;
 
     const nextResult = calculateWinner(nextSquares);
 
-    // Atualiza placar se o jogo terminar neste movimento
     if (nextResult) {
-      setScore((prev) => ({ ...prev, [nextResult.winner]: prev[nextResult.winner] + 1 }));
+      const isP1Winner = nextResult.winner.name === p1Data.name;
+      setScore((prev) => ({
+        ...prev,
+        p1: isP1Winner ? prev.p1 + 1 : prev.p1,
+        p2: !isP1Winner ? prev.p2 + 1 : prev.p2,
+      }));
     } else if (nextSquares.every((square) => square !== null)) {
       setScore((prev) => ({ ...prev, draws: prev.draws + 1 }));
     }
 
     setHistory([...newHistory, nextSquares]);
     setStepNumber(newHistory.length);
-    setXIsNext(!xIsNext);
+    setP1IsNext(!p1IsNext);
   }
 
   function handleClick(i) {
-    // Se for a vez do computador, bloqueia cliques do jogador humano
-    if (isVsComputer && !xIsNext) return;
+    if (isVsComputer && !p1IsNext) return;
     executeMove(i);
   }
 
   function jumpTo(step) {
     setStepNumber(step);
-    setXIsNext(step % 2 === 0);
+    setP1IsNext(step % 2 === 0);
   }
 
   function undoLastMove() {
-    // Se estiver jogando contra a máquina, desfaz 2 passos (o seu e o dela)
     const stepsToUndo = isVsComputer ? 2 : 1;
     if (stepNumber >= stepsToUndo) {
       jumpTo(stepNumber - stepsToUndo);
@@ -97,10 +157,9 @@ export default function App() {
   function restartGame() {
     setHistory([Array(9).fill(null)]);
     setStepNumber(0);
-    setXIsNext(true);
+    setP1IsNext(true);
   }
 
-  // Gera a lista visual do histórico de jogadas
   const moves = history.map((squares, move) => {
     const desc = move ? `Ir para a jogada #${move}` : "Ir para o início do jogo";
     return (
@@ -112,15 +171,50 @@ export default function App() {
     );
   });
 
+  if (loading) {
+    return <div className="loading-screen">Carregando dados dos Pokémon...</div>;
+  }
+
+  // Define o nome de quem está jogando no momento
+  const currentPlayerName = p1IsNext ? p1Data?.name : p2Data?.name;
+
   return (
     <div className="game-wrapper">
-      {/* Lado Esquerdo: Status e Placar */}
+      {/* Lado Esquerdo: Formulário de Seleção e Placar */}
       <div className="left-panel">
         <h2>
           {result
-            ? `Vencedor: ${result.winner}`
-            : `Vez do jogador: ${xIsNext ? "X" : "O"}`}
+            ? `Vencedor: ${result.winner.name}`
+            : `Vez de: ${currentPlayerName}`}
         </h2>
+
+        {/* Formulário de Escolha dos Pokémon */}
+        <form onSubmit={handleUpdatePokemon} className="pokemon-form">
+          <div className="form-group">
+            <label>Jogador 1:</label>
+            <input
+              type="text"
+              value={p1Input}
+              onChange={(e) => setP1Input(e.target.value)}
+              placeholder="Ex: pikachu"
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Jogador 2:</label>
+            <input
+              type="text"
+              value={p2Input}
+              onChange={(e) => setP2Input(e.target.value)}
+              placeholder="Ex: bulbasaur"
+              required
+            />
+          </div>
+          <button type="submit" className="action-btn change-btn">Alterar Pokémon</button>
+        </form>
+
+        {/* Notificação de Erros da API */}
+        {apiError && <p className="error-message">{apiError}</p>}
 
         <div className="mode-selection">
           <label>
@@ -137,10 +231,11 @@ export default function App() {
         </div>
 
         <div className="actions">
-          <button className="action-btn restart" onClick={restartGame}>
+          <button type="button" className="action-btn restart" onClick={restartGame}>
             Reiniciar Jogo
           </button>
           <button
+            type="button"
             className="action-btn undo"
             onClick={undoLastMove}
             disabled={stepNumber === 0 || (isVsComputer && stepNumber < 2)}
@@ -151,13 +246,13 @@ export default function App() {
 
         <div className="score-board">
           <h3>Placar</h3>
-          <p><strong>X:</strong> {score.X}</p>
-          <p><strong>O:</strong> {score.O}</p>
+          <p><strong>{p1Data?.name}:</strong> {score.p1}</p>
+          <p><strong>{p2Data?.name}:</strong> {score.p2}</p>
           <p><strong>Empates:</strong> {score.draws}</p>
         </div>
       </div>
 
-      {/* Centro: O Tabuleiro Principal e Grande */}
+      {/* Centro: Tabuleiro com imagens */}
       <div className="center-panel">
         <div className="board">
           {[0, 1, 2].map((row) => (
@@ -167,7 +262,7 @@ export default function App() {
                 return (
                   <Square
                     key={index}
-                    value={currentSquares[index]}
+                    value={currentSquares[index]} // Passa o objeto do Pokémon selecionado na casa
                     onClick={() => handleClick(index)}
                     isWinner={result?.line.includes(index)}
                   />
