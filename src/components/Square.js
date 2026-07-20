@@ -9,4 +9,6 @@ export default function Square({ value, onClick }) {
     );
   }
 
+  isWinner={winnerLine}
+
   
